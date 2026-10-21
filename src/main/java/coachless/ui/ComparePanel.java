@@ -1,7 +1,6 @@
 package coachless.ui;
 
 import coachless.data.StatsProvider;
-
 import javax.swing.*;
 import java.awt.*;
 import java.util.Map;
@@ -13,12 +12,18 @@ public class ComparePanel extends JPanel {
     private static final Color GOOD = new Color(0x4ADE80);
     private static final Color BAD = new Color(0xF87171);
 
+    private final StatsProvider personal;
+    private final StatsProvider global;
+    private final JPanel body = new JPanel(new BorderLayout());
+
     public ComparePanel(StatsProvider personal, StatsProvider global) {
         super(new BorderLayout(0, 16));
+        this.personal = personal;
+        this.global = global;
         setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
         JLabel title = new JLabel("You vs. Everyone");
-        title.putClientProperty("FlatLaf.styleClass", "h1");   // FlatLaf big heading
+        title.putClientProperty("FlatLaf.styleClass", "h1");
         JLabel sub = new JLabel("How your runs stack up against global averages");
         sub.setForeground(UIManager.getColor("Label.disabledForeground"));
         JPanel header = new JPanel(new GridLayout(2, 1));
@@ -26,27 +31,40 @@ public class ComparePanel extends JPanel {
         header.add(title);
         header.add(sub);
 
-        JPanel grid = new JPanel(new GridLayout(0, 2, 16, 16));   // 2 cards per row
-        grid.setOpaque(false);
-        Map<String, Double> mine = personal.load();
-        Map<String, Double> theirs = global.load();
-        for (String stat : mine.keySet()) {
-            grid.add(new StatCard(stat, mine.get(stat), theirs.getOrDefault(stat, 0.0)));
-        }
-        JPanel top = new JPanel(new BorderLayout());   // keeps cards at natural height
-        top.setOpaque(false);
-        top.add(grid, BorderLayout.NORTH);
-
-        JScrollPane scroll = new JScrollPane(top);
+        body.setOpaque(false);
+        JScrollPane scroll = new JScrollPane(body);
         scroll.setBorder(null);
         scroll.getViewport().setOpaque(false);
         scroll.setOpaque(false);
-
+ 
         add(header, BorderLayout.NORTH);
         add(scroll, BorderLayout.CENTER);
+ 
+        personal.addChangeListener(this::refresh);
+        refresh();
     }
 
-    /** A rounded card. Copy this pattern for any new "tile" in your app. */
+    private void refresh() {
+        body.removeAll();
+        Map<String, Double> mine = personal.load();
+        Map<String, Double> theirs = global.load();
+ 
+        if (mine.isEmpty()) {
+            JLabel empty = new JLabel("No data yet. Add your progress.save file above.");
+            empty.setForeground(UIManager.getColor("Label.disabledForeground"));
+            body.add(empty, BorderLayout.NORTH);
+        } else {
+            JPanel grid = new JPanel(new GridLayout(0, 2, 16, 16));   // 2 cards per row
+            grid.setOpaque(false);
+            for (String stat : mine.keySet()) {
+                grid.add(new StatCard(stat, mine.get(stat), theirs.getOrDefault(stat, 0.0)));
+            }
+            body.add(grid, BorderLayout.NORTH);   // keeps cards at natural height
+        }
+        body.revalidate();
+        body.repaint();
+    }
+
     private static class StatCard extends JPanel {
         private final double you, global;
 

@@ -9,9 +9,9 @@ public class GlobalStats implements StatsProvider {
     public Map<String, Double> load() {
         Map<String, Double> m = new LinkedHashMap<>();
         m.put("Win rate %", 18.0);
-        m.put("Avg deck size", 27.1);
+        m.put("Avg run time", 27.1);
         m.put("Avg floors reached", 31.0);
-        m.put("Avg relics", 7.8);
+        m.put("Best win streak", 5.0);
         return m;
     }
 }

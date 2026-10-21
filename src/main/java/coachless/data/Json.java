@@ -12,7 +12,7 @@ public final class Json {
     private Json(String s) { this.s = s; }
 
     public static Object parse(String text) {
-        if (text.startsWith("﻿")) text = text.substring(1);
+        if (text.startsWith(" ")) text = text.substring(1);
         Json p = new Json(text);
         p.ws();
         Object v = p.value();

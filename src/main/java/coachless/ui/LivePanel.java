@@ -7,10 +7,7 @@ import java.awt.BorderLayout;
 import java.awt.Font;
 import java.nio.file.Path;
 
-/**
- * Shows the live run file as it changes. Pick the file with the button.
- * TODO: parse the JSON and generate suggestions in onRunUpdate().
- */
+
 public class LivePanel extends JPanel {
     private final JLabel status = new JLabel("No run file selected");
     private final JTextArea output = new JTextArea();

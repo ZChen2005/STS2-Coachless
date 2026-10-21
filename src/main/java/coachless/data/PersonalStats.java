@@ -22,7 +22,7 @@ public class PersonalStats implements StatsProvider {
             seconds += s.playtimeSeconds;
             streak = Math.max(streak, s.bestWinStreak);
         }
-        if (runs == 0) return m;   // nothing loaded yet -> ComparePanel shows a hint
+        if (runs == 0) return m;
  
         m.put("Win rate %", 100.0 * wins / runs);
         m.put("Avg floors reached", (double) floors / runs);

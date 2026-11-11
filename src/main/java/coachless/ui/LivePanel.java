@@ -2,14 +2,15 @@ package coachless.ui;
 
 import coachless.GameSessionFramework.session.GameSession;
 import coachless.data.CurrentRun;
+import coachless.data.LiveRunModel;
 import coachless.data.Names;
-import coachless.data.SaveFileManager;
 import coachless.multiplayer.MultiplayerController;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
@@ -17,10 +18,18 @@ import java.util.concurrent.ExecutionException;
 public class LivePanel extends JPanel implements MultiplayerController.Listener {
     private static final Color ACCENT = new Color(0x7C9CFF);
 
-    private final SaveFileManager saves;
+    private final LiveRunModel runModel;
     private final JLabel runLine = new JLabel(" ");
     private final JLabel status = new JLabel(" ");
-    private final PotionCard potion = new PotionCard();
+    // one PlayerView per player in the run (1 in single player, up to 4 in multiplayer)
+    private final JPanel playersBox = new JPanel() {
+        @Override
+        public Dimension getMaximumSize() {   // grow wider with the window, but never taller than needed
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    };
+    private final List<PlayerView> playerViews = new ArrayList<>();
+    private long lastSharedSave = -1;   // saveTime of the last run the host sent to the other players
 
     // ---- multiplayer ----
     private static final String CARD_OFF = "off";
@@ -50,9 +59,9 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
     private final JList<String> playersList = new JList<>(playersModel);
     private String inviteText = "";
 
-    public LivePanel(SaveFileManager saves) {
+    public LivePanel(LiveRunModel runModel) {
         super(new BorderLayout(0, 16));
-        this.saves = saves;
+        this.runModel = runModel;
         setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
         JLabel title = new JLabel("Live Run");
@@ -66,18 +75,18 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         header.add(runLine);
         header.add(status);
 
-        potion.setMaximumSize(new Dimension(Integer.MAX_VALUE, 200));
+        playersBox.setOpaque(false);
         JPanel multi = buildMultiplayerPanel();
 
         JPanel content = new JPanel();
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setOpaque(false);
-        for (JComponent c : new JComponent[] { header, potion, multi }) {
+        for (JComponent c : new JComponent[] { header, playersBox, multi }) {
             c.setAlignmentX(Component.LEFT_ALIGNMENT);
         }
         content.add(header);
         content.add(Box.createVerticalStrut(16));
-        content.add(potion);
+        content.add(playersBox);
         content.add(Box.createVerticalStrut(16));
         content.add(multi);
 
@@ -88,22 +97,23 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         scroll.setOpaque(false);
         add(scroll, BorderLayout.CENTER);
 
-        saves.addListener(this::refresh);
+        runModel.addListener(this::refresh);
         refresh();
     }
 
+    // Redraws everything from whichever run the model says we should show
     private void refresh() {
-        CurrentRun run = CurrentRun.latest(saves);
+        CurrentRun run = runModel.current();
         if (run == null) {
             runLine.setText(" ");
-            status.setText("No active run found. Add the folder that holds current_run.save.");
-            potion.show("Potion chance", "-", "Shows up once a run is in progress.", "", Double.NaN);
+            status.setText(emptyMessage());
+            syncPlayerViews(0);
             return;
         }
 
         String act = "Act " + (run.actIndex + 1) + " (" + Names.PrettyPrint(run.actId) + ")";
-        runLine.setText(Names.PrettyPrint(run.characterId) + "  -  Ascension " + run.ascension + "  -  " + act
-                + "  -  HP " + run.hp + "/" + run.maxHp + "  -  Gold " + run.gold);
+        runLine.setText("Ascension " + run.ascension + "  -  " + act
+                + (run.multiplayer ? "  -  " + run.players.size() + " players" : ""));
 
         CurrentRun.Point here = run.currentPoint();
         String type = here == null ? "" : here.type();
@@ -118,14 +128,56 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
                 status.setText("On the map (last room: " + roomName(type) + ")");
         }
 
-        updatePotionCard(run, type);
+        syncPlayerViews(run.players.size());
+        for (int i = 0; i < run.players.size(); i++) {
+            playerViews.get(i).update(run, run.players.get(i), type);
+        }
+        shareWithParty(run);
     }
 
-    private void updatePotionCard(CurrentRun run, String type) {
-        double normal = run.potionChance(false);
-        double elite = run.potionChance(true);
+    // Host only: when the game saves a new version of the run, send it to everyone else
+    private void shareWithParty(CurrentRun run) {
+        if (runModel.mode() == LiveRunModel.Mode.MULTI_HOST && run.saveTime != lastSharedSave) {
+            lastSharedSave = run.saveTime;
+            multiplayer.shareRun(run.rawJson);
+        }
+    }
+
+    private String emptyMessage() {
+        switch (runModel.mode()) {
+            case MULTI_IDLE:
+                return "Host or join a session below to see a multiplayer run.";
+            case MULTI_HOST:
+                return "No multiplayer run found. Add the folder that holds current_run_mp.save.";
+            case MULTI_CLIENT:
+                return "Waiting for the host to share the run...";
+            default:
+                return "No active run found. Add the folder that holds current_run.save.";
+        }
+    }
+
+    // Makes sure there is exactly one PlayerView per player, laid out in up to 2 columns
+    private void syncPlayerViews(int count) {
+        if (playerViews.size() == count) {
+            return;
+        }
+        playersBox.removeAll();
+        playerViews.clear();
+        playersBox.setLayout(new GridLayout(0, Math.max(1, Math.min(2, count)), 16, 16));
+        for (int i = 0; i < count; i++) {
+            PlayerView v = new PlayerView();
+            playerViews.add(v);
+            playersBox.add(v);
+        }
+        playersBox.revalidate();
+        playersBox.repaint();
+    }
+
+    private static void updatePotionCard(PotionCard card, CurrentRun run, CurrentRun.PlayerInfo p, String type) {
+        double normal = run.potionChance(p, false);
+        double elite = run.potionChance(p, true);
         if (Double.isNaN(normal)) {
-            potion.show("Potion chance", "-", "This save file doesn't have the potion chance.", "", Double.NaN);
+            card.show("Potion chance", "-", "This save file doesn't have the potion chance.", "", Double.NaN);
             return;
         }
         String both = "Normal fight " + fmt(normal) + "    -    Elite fight " + fmt(elite);
@@ -133,7 +185,7 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         switch (run.phase()) {
             case REWARDS:
                 // The game updates chance after the reward screen
-                potion.show("Fight finished", "Rewards pending",
+                card.show("Fight finished", "Rewards pending",
                         "The chance updates after the reward screen (it was " + fmt(normal) + " before this fight).",
                         "Next fight: " + fmt(clamp(normal + 0.10)) + " if no potion dropped, "
                                 + fmt(clamp(normal - 0.10)) + " if one did.",
@@ -142,29 +194,29 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
             case IN_ROOM:
                 switch (type) {
                     case "monster":
-                        potion.show("This combat (normal fight)", fmt(normal),
+                        card.show("This combat (normal fight)", fmt(normal),
                                 "Base chance from your recent fights.", both, normal);
                         return;
                     case "elite":
-                        potion.show("This combat (elite)", fmt(elite),
+                        card.show("This combat (elite)", fmt(elite),
                                 "Base " + fmt(normal) + " + " + fmt(CurrentRun.ELITE_BONUS) + " elite bonus.",
                                 both, elite);
                         return;
                     case "boss":
-                        potion.show("This combat (boss)", fmt(normal),
+                        card.show("This combat (boss)", fmt(normal),
                                 "Boss fights: any special rules aren't included.", both, normal);
                         return;
                     case "unknown":
-                        potion.show("This room (?)", fmt(normal),
+                        card.show("This room (?)", fmt(normal),
                                 "If it turns out to be a fight, this is the normal-fight chance.", both, normal);
                         return;
                     default:
-                        potion.show("Next combat", fmt(normal),
+                        card.show("Next combat", fmt(normal),
                                 "This room isn't a fight. Chance for your next normal fight.", both, normal);
                         return;
                 }
             default:
-                potion.show("Next combat", fmt(normal),
+                card.show("Next combat", fmt(normal),
                         "Chance for your next normal fight. Elites get +" + fmt(CurrentRun.ELITE_BONUS) + ".",
                         both, normal);
         }
@@ -254,11 +306,15 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
     private void onModeChanged() {
         if (multiBtn.isSelected()) {
             multiCards.show(multiArea, multiplayer.isInSession() ? CARD_SESSION : CARD_SETUP);
+            runModel.setMode(multiplayer.isHosting() ? LiveRunModel.Mode.MULTI_HOST
+                    : multiplayer.isConnected() ? LiveRunModel.Mode.MULTI_CLIENT
+                    : LiveRunModel.Mode.MULTI_IDLE);
         } else {
             if (multiplayer.isInSession()) {
                 multiplayer.leaveSession();
             }
             multiCards.show(multiArea, CARD_OFF);
+            runModel.setMode(LiveRunModel.Mode.SINGLE);   // back to singleplayer 
         }
     }
 
@@ -298,6 +354,7 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
                 joinBtn.setEnabled(true);
                 try {
                     get();
+                    runModel.setMode(LiveRunModel.Mode.MULTI_CLIENT);   // show the host's run, not local files
                     showSession(code, address + ":" + port,
                             "Join my STS Coachless game - address " + address
                                     + ", port " + port + ", code " + code);
@@ -315,6 +372,7 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         multiplayer.leaveSession();
         playersModel.clear();
         multiCards.show(multiArea, CARD_SETUP);
+        runModel.setMode(LiveRunModel.Mode.MULTI_IDLE);
     }
 
     private void showSession(String code, String address, String invite) {
@@ -350,7 +408,6 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         JOptionPane.showMessageDialog(this, message, "Multiplayer", JOptionPane.ERROR_MESSAGE);
     }
 
-    // ---- MultiplayerController.Listener ----
 
     @Override
     public void onStatusChanged(String s) {
@@ -371,13 +428,21 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         showSession(code, address + ":" + port,
                 "Join my STS Coachless game - address " + address
                         + ", port " + port + ", code " + code);
+        lastSharedSave = -1;   // make sure the first run gets sent
+        runModel.setMode(LiveRunModel.Mode.MULTI_HOST);   // read current_run_mp.save
     }
 
     @Override
     public void onDisconnected(String reason) {
+        runModel.setMode(LiveRunModel.Mode.MULTI_IDLE);
         playersModel.clear();
         multiCards.show(multiArea, CARD_SETUP);
         JOptionPane.showMessageDialog(this, reason, "Disconnected", JOptionPane.WARNING_MESSAGE);
+    }
+
+    @Override
+    public void onRunReceived(String json) {
+        runModel.setRemoteRun(json);   // host sent a new copy of the run
     }
 
     @Override
@@ -407,6 +472,46 @@ public class LivePanel extends JPanel implements MultiplayerController.Listener 
         return Math.abs(pct - Math.round(pct)) < 0.05
                 ? String.format("%d%%", Math.round(pct))
                 : String.format("%.1f%%", pct);
+    }
+
+    // One player's section: name/HP/gold, potions held, and their potion-chance card
+    private static class PlayerView extends JPanel {
+        private final JLabel header = new JLabel(" ");
+        private final JLabel potions = new JLabel(" ");
+        private final PotionCard card = new PotionCard();
+
+        PlayerView() {
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setOpaque(false);
+            header.setFont(header.getFont().deriveFont(Font.BOLD, 16f));
+            potions.setForeground(UIManager.getColor("Label.disabledForeground"));
+            card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 200));
+            for (JComponent c : new JComponent[] { header, potions, card }) {
+                c.setAlignmentX(Component.LEFT_ALIGNMENT);
+            }
+            add(header);
+            add(Box.createVerticalStrut(2));
+            add(potions);
+            add(Box.createVerticalStrut(8));
+            add(card);
+        }
+
+        void update(CurrentRun run, CurrentRun.PlayerInfo p, String roomType) {
+            header.setText(Names.PrettyPrint(p.characterId()) + "  -  HP " + p.hp() + "/" + p.maxHp()
+                    + "  -  Gold " + p.gold());
+            StringBuilder held = new StringBuilder("Potions: ");
+            if (p.potions().isEmpty()) {
+                held.append("none");
+            } else {
+                for (int i = 0; i < p.potions().size(); i++) {
+                    if (i > 0) held.append(", ");
+                    held.append(Names.PrettyPrint(p.potions().get(i)));
+                }
+            }
+            held.append("  (").append(p.potions().size()).append("/").append(p.potionSlots()).append(" slots)");
+            potions.setText(held.toString());
+            updatePotionCard(card, run, p, roomType);
+        }
     }
 
     private static class PotionCard extends JPanel {

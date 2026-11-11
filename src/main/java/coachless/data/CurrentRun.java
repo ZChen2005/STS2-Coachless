@@ -8,6 +8,10 @@ public final class CurrentRun {
     public static final double ELITE_BONUS = 0.125;
     public record Point(int col, int row, String type, List<int[]> children) { }
     public record ActInfo(String id, String bossId, String secondBossId, String ancientId) { }
+
+    // multiplayer files have one per player.
+    public record PlayerInfo(String characterId, int hp, int maxHp, int gold,
+                             double potionOdds, List<String> potions, int potionSlots) { }
  
     public enum Phase { ON_MAP, IN_ROOM, REWARDS }
  
@@ -27,18 +31,30 @@ public final class CurrentRun {
     public final List<int[]> visited;
  
     public final double potionOdds;
+
+    public final List<PlayerInfo> players;   // everyone in the run 
+    public final boolean multiplayer;        // true if this came from current_run_mp.save
+    public final String rawJson;             // the original file text
  
     private final int historyEntries;
     public final boolean preFinished;
     public final String preFinishedEncounter;
  
-    private CurrentRun(Map<String, Object> root) {
+    private CurrentRun(Map<String, Object> root, String rawJson, boolean multiplayer) {
         List<Object> actList = Json.list(root.get("acts"));
         List<Object> playerList = Json.list(root.get("players"));
         if (actList.isEmpty() || playerList.isEmpty()) {
             throw new IllegalArgumentException("Not a current_run.save file (no acts or players)");
         }
         Map<String, Object> player = Json.map(playerList.get(0));
+
+        this.rawJson = rawJson;
+        this.multiplayer = multiplayer;
+        List<PlayerInfo> infos = new ArrayList<>();
+        for (Object o : playerList) {
+            infos.add(playerInfo(Json.map(o)));
+        }
+        players = infos;
  
         characterId = Json.str(player, "character_id", "");
         ascension = (int) Json.num(root, "ascension", 0);
@@ -104,7 +120,11 @@ public final class CurrentRun {
     }
  
     public static CurrentRun parse(String json) {
-        return new CurrentRun(Json.map(Json.parse(json)));
+        return parse(json, false);
+    }
+
+    public static CurrentRun parse(String json, boolean multiplayer) {
+        return new CurrentRun(Json.map(Json.parse(json)), json, multiplayer);
     }
  
     //most recent
@@ -116,6 +136,16 @@ public final class CurrentRun {
         return best;
     }
  
+    // most recent, only solo files or only multiplayer files 
+    public static CurrentRun latest(SaveFileManager saves, boolean multiplayer) {
+        CurrentRun best = null;
+        for (CurrentRun r : saves.valid(CurrentRun.class)) {
+            if (r.multiplayer != multiplayer) continue;
+            if (best == null || r.saveTime > best.saveTime) best = r;
+        }
+        return best;
+    }
+
     //keeping track of current phase
     public Phase phase() {
         if (preFinished) {
@@ -147,6 +177,32 @@ public final class CurrentRun {
         return Math.max(0, Math.min(1, potionOdds + (elite ? ELITE_BONUS : 0)));
     }
  
+    // same math as potionChance(boolean) but for any player in the run
+    public double potionChance(PlayerInfo p, boolean elite) {
+        if (Double.isNaN(p.potionOdds())) {
+            return Double.NaN;
+        }
+        return Math.max(0, Math.min(1, p.potionOdds() + (elite ? ELITE_BONUS : 0)));
+    }
+
+    private static PlayerInfo playerInfo(Map<String, Object> p) {
+        List<String> potions = new ArrayList<>();
+        for (Object o : Json.list(p.get("potions"))) {
+            String id = Json.str(Json.map(o), "id", "");
+            if (!id.isEmpty()) {
+                potions.add(id);
+            }
+        }
+        return new PlayerInfo(
+                Json.str(p, "character_id", ""),
+                (int) Json.num(p, "current_hp", 0),
+                (int) Json.num(p, "max_hp", 0),
+                (int) Json.num(p, "gold", 0),
+                Json.num(Json.map(p.get("odds")), "potion_reward_odds_value", Double.NaN),
+                potions,
+                (int) Json.num(p, "max_potion_slot_count", 0));
+    }
+
     private static Point point(Map<String, Object> m) {
         Map<String, Object> c = Json.map(m.get("coord"));
         List<int[]> kids = new ArrayList<>();

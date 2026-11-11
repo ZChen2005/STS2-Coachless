@@ -7,6 +7,12 @@ import coachless.GameSessionFramework.session.GameCodeGenerator;
 import coachless.GameSessionFramework.session.GameSession;
 
 import javax.swing.SwingUtilities;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -33,6 +39,9 @@ public class MultiplayerController {
 
         // Anything else
         void onMessageReceived(String message);
+
+        // Joined players only.
+        void onRunReceived(String json);
     }
 
     private final Listener listener;
@@ -114,6 +123,8 @@ public class MultiplayerController {
     private void handleClientMessage(String message) {
         if (message.startsWith("LOBBY ")) {
             notifyPlayers(Arrays.asList(message.substring(6).split(",")));
+        } else if (message.startsWith("RUN ")) {
+            handleRunMessage(message.substring(4));
         } else {
             notifyMessage(message);
         }
@@ -151,6 +162,53 @@ public class MultiplayerController {
         } catch (SocketException ignored) {
         }
         return "127.0.0.1";
+    }
+
+    // Host only: sends the run (the host's current_run_mp.save text) to every joined player.
+    // Players who join later get the latest one automatically.
+    public void shareRun(String runJson) {
+        HostServer server = hostServer;
+        if (server == null) {
+            return;
+        }
+        try {
+            server.publishState("RUN " + pack(runJson));
+        } catch (IOException e) {
+            notifyStatus("Could not share the run: " + e.getMessage());
+        }
+    }
+
+    // Client side: unpack a RUN message and hand the JSON to the UI
+    private void handleRunMessage(String packed) {
+        try {
+            String json = unpack(packed);
+            SwingUtilities.invokeLater(() -> listener.onRunReceived(json));
+        } catch (IOException | IllegalArgumentException e) {
+            notifyStatus("Received a run update that could not be read");
+        }
+    }
+
+    // save file is multi-line JSON, but messages are one line each
+    // gzip-compressed and Base64-encoded into a single line.
+    private static String pack(String text) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (GZIPOutputStream gz = new GZIPOutputStream(bytes)) {
+            gz.write(text.getBytes(StandardCharsets.UTF_8));
+        }
+        return Base64.getEncoder().encodeToString(bytes.toByteArray());
+    }
+
+    private static final int MAX_RUN_BYTES = 8 * 1024 * 1024; // refuse absurdly large updates
+
+    private static String unpack(String packed) throws IOException {
+        byte[] compressed = Base64.getDecoder().decode(packed.trim());
+        try (GZIPInputStream gz = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+            byte[] data = gz.readNBytes(MAX_RUN_BYTES + 1);
+            if (data.length > MAX_RUN_BYTES) {
+                throw new IOException("run data too large");
+            }
+            return new String(data, StandardCharsets.UTF_8);
+        }
     }
 
     private void notifyStatus(String status) {

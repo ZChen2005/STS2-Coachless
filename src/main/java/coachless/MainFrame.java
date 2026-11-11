@@ -2,6 +2,7 @@ package coachless;
 
 import coachless.data.CurrentRunFileType;
 import coachless.data.GlobalStats;
+import coachless.data.LiveRunModel;
 import coachless.data.PersonalStats;
 import coachless.data.SaveFileManager;
 import coachless.ui.ComparePanel;
@@ -25,13 +26,14 @@ public class MainFrame extends JFrame {
 
         SaveFileManager saves = new SaveFileManager(new ProgressFileType(), new CurrentRunFileType());
         PersonalStats personal = new PersonalStats(saves);
+        LiveRunModel runModel = new LiveRunModel(saves);   // picks which run Live Run + Map show
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Compare", new ComparePanel(personal, new GlobalStats()));
         tabs.addTab("Monsters", new MonsterPanel(saves));
         tabs.addTab("Cards", new CardPanel(saves));
-        tabs.addTab("Live Run", new LivePanel(saves));
-        tabs.addTab("Map", new MapPanel(saves));
+        tabs.addTab("Live Run", new LivePanel(runModel));
+        tabs.addTab("Map", new MapPanel(runModel));
 
         add(new SourcesBar(saves), BorderLayout.NORTH);
         add(tabs, BorderLayout.CENTER);

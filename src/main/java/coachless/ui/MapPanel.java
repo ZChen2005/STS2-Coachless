@@ -2,7 +2,7 @@ package coachless.ui;
 
 import coachless.data.CurrentRun;
 import coachless.data.Names;
-import coachless.data.SaveFileManager;
+import coachless.data.LiveRunModel;
 
 import javax.swing.*;
 import java.awt.*;
@@ -29,14 +29,14 @@ public class MapPanel extends JPanel {
             "boss", new Color(0xEF4444),
             "ancient", new Color(0x38BDF8));
 
-    private final SaveFileManager saves;
+    private final LiveRunModel runModel;
     private final MapView view = new MapView();
     private final JLabel subtitle = new JLabel(" ");
     private final JLabel bosses = new JLabel(" ");
 
-    public MapPanel(SaveFileManager saves) {
+    public MapPanel(LiveRunModel runModel) {
         super(new BorderLayout(0, 12));
-        this.saves = saves;
+        this.runModel = runModel;
         setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
         JLabel title = new JLabel("Map");
@@ -54,15 +54,15 @@ public class MapPanel extends JPanel {
         add(view, BorderLayout.CENTER);
         add(legend(), BorderLayout.SOUTH);
 
-        saves.addListener(this::refresh);   // live updates when the game saves
+        runModel.addListener(this::refresh);   // updates when the run changes
         refresh();
     }
 
     private void refresh() {
-        CurrentRun run = CurrentRun.latest(saves);
+        CurrentRun run = runModel.current();
         view.setRun(run);
         if (run == null) {
-            subtitle.setText("No active run found. Add the folder that holds current_run.save.");
+            subtitle.setText("No run to show. Single player: add the folder with current_run.save. Multiplayer: host or join a session.");
             bosses.setText(" ");
             return;
         }

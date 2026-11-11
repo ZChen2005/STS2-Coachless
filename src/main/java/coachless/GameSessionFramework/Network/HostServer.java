@@ -32,8 +32,8 @@ import java.util.stream.Collectors;
  *   client -> host:   JOIN <code> <name>
  *   host -> client:   OK <playerId>   or   ERROR <reason>
  *   host -> everyone: LOBBY name1,name2,...   (whenever someone joins or leaves)
- *   both directions:  PING every 5s (heartbeat; 15s of silence = disconnected)
- *   host -> everyone: CLOSED   (host ended the session)
+ *   both directions:  PING every 5s
+ *   host -> everyone: CLOSED   
  */
 public class HostServer {
 
@@ -67,6 +67,7 @@ public class HostServer {
 
     private ServerSocket serverSocket;
     private volatile boolean running;
+    private volatile String latestState;   // last shared line (e.g. the run) then given to new joiners
 
     // Pass port 0 to let the OS pick a free port
     public HostServer(GameSession session, int port, Listener listener) {
@@ -75,7 +76,7 @@ public class HostServer {
         this.listener = listener;
     }
 
-    // Simpler version: just log text (used by HostMain / SessionDemo)
+    // log text
     public HostServer(GameSession session, int port, Consumer<String> log) {
         this(session, port, new Listener() {
             @Override
@@ -98,6 +99,15 @@ public class HostServer {
                 w.println("PING");
             }
         }, HEARTBEAT_MS, HEARTBEAT_MS, TimeUnit.MILLISECONDS);
+    }
+
+    // Remembers one line of shared state and sends it to everyone connected.
+    // Players who join later are sent the latest one automatically.
+    public void publishState(String line) {
+        latestState = line;
+        for (PrintWriter w : clients) {
+            w.println(line);
+        }
     }
 
     public int getPort() {
@@ -185,17 +195,21 @@ public class HostServer {
 
             out.println("OK " + player.id());
             clients.add(out);
+            String state = latestState;
+            if (state != null) {
+                out.println(state); // catch the new player up on the latest shared state
+            }
             listener.onEvent(player.name() + " joined (" + session.getPlayers().size()
                     + "/" + GameSession.MAX_PLAYERS + ")");
             playersChanged();
 
-            // Stay connected. Any line counts as "still alive".
+            // Stay connected. Any line means still alive.
             String msg;
             while ((msg = in.readLine()) != null) {
                 if (msg.equals("PING")) {
                     continue;
                 }
-                // Game-state messages from this player get handled here later.
+                // Game-state messages from this player
             }
             reason = "left the session";
         } catch (SocketTimeoutException e) {
@@ -211,7 +225,7 @@ public class HostServer {
             } catch (IOException ignored) {
             }
             sockets.remove(socket);
-            // running == false means the host is shutting everything down, so skip the noise
+            // running == false means the host is shutting everything down
             if (player != null && running) {
                 session.removePlayer(player);
                 listener.onEvent(player.name() + " left (" + reason + ")");

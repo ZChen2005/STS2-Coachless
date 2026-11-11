@@ -26,6 +26,7 @@ final class MapArt {
 
     private static final Map<String, BufferedImage> RAW = new HashMap<>();
     private static final Map<String, BufferedImage> SCALED = new HashMap<>();
+    private static Color bgColor;
 
     static BufferedImage node(String type) {
         return first(NODE_NAMES.getOrDefault(type, List.of(type)));
@@ -41,13 +42,34 @@ final class MapArt {
         return node("boss");
     }
 
-    // static BufferedImage nodeBackdrop() {
-    //     return first(List.of("map_node_background", "node_background", "background"));
-    // }
+    static BufferedImage nodeBackdrop() {
+        return first(List.of("map_node_background", "node_background"));
+    }
 
-    // static BufferedImage background() {
-    //     return first(List.of("map_background", "bg"));
-    // }
+    static BufferedImage background() {
+        return first(List.of("background", "map_background", "bg"));
+    }
+
+    static Color backgroundColor() {
+        BufferedImage bg = background();
+        if (bg == null) return null;
+        if (bgColor == null) {
+            long r = 0, g = 0, b = 0, n = 0;
+            int cx = bg.getWidth() / 2, cy = bg.getHeight() / 2, half = Math.max(1, Math.min(bg.getWidth(), bg.getHeight()) / 8);
+            for (int y = cy - half; y < cy + half; y++) {
+                for (int x = cx - half; x < cx + half; x++) {
+                    int argb = bg.getRGB(x, y);
+                    if ((argb >>> 24) < 250) continue;     // skip see-through speckles
+                    r += (argb >> 16) & 255;
+                    g += (argb >> 8) & 255;
+                    b += argb & 255;
+                    n++;
+                }
+            }
+            bgColor = n == 0 ? new Color(0x4A3C2B) : new Color((int) (r / n), (int) (g / n), (int) (b / n));
+        }
+        return bgColor;
+    }
 
     static BufferedImage ancient(String ancientId) {
         if (ancientId != null && !ancientId.isEmpty()) {
